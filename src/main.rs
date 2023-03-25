@@ -6,7 +6,7 @@ use std::time::SystemTime;
 
 use bytes::Bytes;
 use dns_message_parser::rr::{A, RR};
-use dns_message_parser::Dns;
+use dns_message_parser::{Dns, Flags, Opcode, RCode};
 use rsdsl_dhcp4d::lease::Lease;
 
 fn main() -> Result<()> {
@@ -54,16 +54,6 @@ fn handle_query(sock: &UdpSocket, buf: &[u8], raddr: SocketAddr) -> Result<()> {
 
     msg.questions = fwd;
 
-    let bytes = msg.encode()?;
-
-    let uplink = UdpSocket::bind("0.0.0.0:0")?;
-    uplink.connect("8.8.8.8:53")?;
-
-    let n = uplink.send(&bytes)?;
-    if n != bytes.len() {
-        return Err(Error::PartialSend);
-    }
-
     let lan_resp = lan.into_iter().map(|q| {
         let lease = dhcp_lease(q.domain_name.to_string()).unwrap().unwrap();
         RR::A(A {
@@ -77,14 +67,57 @@ fn handle_query(sock: &UdpSocket, buf: &[u8], raddr: SocketAddr) -> Result<()> {
         })
     });
 
-    let mut buf = [0; 1024];
-    let n = uplink.recv(&mut buf)?;
-    let buf = &buf[..n];
+    let mut resp_answers = Vec::new();
+    let mut resp_authorities = Vec::new();
+    let mut resp_additionals = Vec::new();
 
-    let bytes = Bytes::copy_from_slice(buf);
-    let mut resp = Dns::decode(bytes)?;
+    if !msg.questions.is_empty() {
+        let bytes = msg.encode()?;
 
-    resp.answers = resp.answers.into_iter().chain(lan_resp).collect();
+        let uplink = UdpSocket::bind("0.0.0.0:0")?;
+        uplink.connect("8.8.8.8:53")?;
+
+        let n = uplink.send(&bytes)?;
+        if n != bytes.len() {
+            return Err(Error::PartialSend);
+        }
+
+        let mut buf = [0; 1024];
+        let n = uplink.recv(&mut buf)?;
+        let buf = &buf[..n];
+
+        let bytes = Bytes::copy_from_slice(buf);
+        let resp = Dns::decode(bytes)?;
+
+        resp_answers = resp.answers;
+        resp_authorities = resp.authorities;
+        resp_additionals = resp.additionals;
+    }
+
+    let answers: Vec<RR> = resp_answers.into_iter().chain(lan_resp).collect();
+
+    let resp = Dns {
+        id: msg.id,
+        flags: Flags {
+            qr: true,
+            opcode: Opcode::Query,
+            aa: true,
+            tc: false,
+            rd: false,
+            ra: false,
+            ad: false,
+            cd: true,
+            rcode: if !answers.is_empty() {
+                RCode::NoError
+            } else {
+                RCode::NXDomain
+            },
+        },
+        questions: Vec::new(),
+        answers,
+        authorities: resp_authorities,
+        additionals: resp_additionals,
+    };
 
     let bytes = resp.encode()?;
 
@@ -101,7 +134,8 @@ fn dhcp_lease(hostname: String) -> Result<Option<Lease>> {
     let leases: Vec<Lease> = serde_json::from_reader(&file)?;
 
     for lease in leases {
-        if lease.hostname == Some(hostname.clone()) {
+        let lease_name = lease.hostname.clone().map(|name| name + ".");
+        if lease_name == Some(hostname.clone()) {
             return Ok(Some(lease));
         }
     }
