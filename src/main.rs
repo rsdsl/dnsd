@@ -11,6 +11,8 @@ use dns_message_parser::{Dns, Flags, Opcode, RCode};
 use rsdsl_dhcp4d::lease::Lease;
 
 fn main() -> Result<()> {
+    println!("[dnsd] init");
+
     let sock = UdpSocket::bind("0.0.0.0:53")?;
 
     loop {
@@ -58,7 +60,7 @@ fn handle_query(sock: &UdpSocket, buf: &[u8], raddr: SocketAddr) -> Result<()> {
     let lan_resp = lan.into_iter().filter_map(|q| {
         if q.q_type == QType::A || q.q_type == QType::ALL {
             let lease = dhcp_lease(q.domain_name.to_string()).unwrap().unwrap();
-            Some(RR::A(A {
+            let answer = RR::A(A {
                 domain_name: q.domain_name,
                 ttl: lease
                     .expires
@@ -66,7 +68,10 @@ fn handle_query(sock: &UdpSocket, buf: &[u8], raddr: SocketAddr) -> Result<()> {
                     .unwrap()
                     .as_secs() as u32,
                 ipv4_addr: lease.address,
-            }))
+            });
+
+            println!("[dnsd] {} dhcp {}", raddr, answer);
+            Some(answer)
         } else {
             None
         }
@@ -97,6 +102,10 @@ fn handle_query(sock: &UdpSocket, buf: &[u8], raddr: SocketAddr) -> Result<()> {
         resp_answers = resp.answers;
         resp_authorities = resp.authorities;
         resp_additionals = resp.additionals;
+
+        for answer in &resp_answers {
+            println!("[dnsd] {} fwrd {}", raddr, answer);
+        }
     }
 
     let answers: Vec<RR> = resp_answers.into_iter().chain(lan_resp).collect();
