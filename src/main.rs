@@ -5,6 +5,7 @@ use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::time::SystemTime;
 
 use bytes::Bytes;
+use dns_message_parser::question::QType;
 use dns_message_parser::rr::{A, RR};
 use dns_message_parser::{Dns, Flags, Opcode, RCode};
 use rsdsl_dhcp4d::lease::Lease;
@@ -54,17 +55,21 @@ fn handle_query(sock: &UdpSocket, buf: &[u8], raddr: SocketAddr) -> Result<()> {
 
     msg.questions = fwd;
 
-    let lan_resp = lan.into_iter().map(|q| {
-        let lease = dhcp_lease(q.domain_name.to_string()).unwrap().unwrap();
-        RR::A(A {
-            domain_name: q.domain_name,
-            ttl: lease
-                .expires
-                .duration_since(SystemTime::now())
-                .unwrap()
-                .as_secs() as u32,
-            ipv4_addr: lease.address,
-        })
+    let lan_resp = lan.into_iter().filter_map(|q| {
+        if q.q_type == QType::A || q.q_type == QType::ALL {
+            let lease = dhcp_lease(q.domain_name.to_string()).unwrap().unwrap();
+            Some(RR::A(A {
+                domain_name: q.domain_name,
+                ttl: lease
+                    .expires
+                    .duration_since(SystemTime::now())
+                    .unwrap()
+                    .as_secs() as u32,
+                ipv4_addr: lease.address,
+            }))
+        } else {
+            None
+        }
     });
 
     let mut resp_answers = Vec::new();
