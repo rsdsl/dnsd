@@ -2,7 +2,8 @@ use rsdsl_dnsd::error::{Error, Result};
 
 use std::fs::File;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
-use std::time::SystemTime;
+use std::thread;
+use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 use dns_message_parser::question::QType;
@@ -30,14 +31,16 @@ fn main() -> Result<()> {
             continue;
         }
 
-        match handle_query(&sock, buf, raddr) {
+        let sock2 = sock.try_clone()?;
+        let buf = buf.to_vec();
+        thread::spawn(move || match handle_query(sock2, &buf, raddr) {
             Ok(_) => {}
             Err(e) => println!("[dnsd] can't handle query from {}: {}", raddr, e),
-        }
+        });
     }
 }
 
-fn handle_query(sock: &UdpSocket, buf: &[u8], raddr: SocketAddr) -> Result<()> {
+fn handle_query(sock: UdpSocket, buf: &[u8], raddr: SocketAddr) -> Result<()> {
     let bytes = Bytes::copy_from_slice(buf);
     let mut msg = Dns::decode(bytes)?;
 
@@ -87,6 +90,8 @@ fn handle_query(sock: &UdpSocket, buf: &[u8], raddr: SocketAddr) -> Result<()> {
         let bytes = msg.encode()?;
 
         let uplink = UdpSocket::bind("0.0.0.0:0")?;
+
+        uplink.set_read_timeout(Some(Duration::from_secs(1)))?;
         uplink.connect("8.8.8.8:53")?;
 
         let n = uplink.send(&bytes)?;
