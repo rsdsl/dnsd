@@ -41,6 +41,8 @@ fn handle_query(sock: &UdpSocket, buf: &[u8], raddr: SocketAddr) -> Result<()> {
     let bytes = Bytes::copy_from_slice(buf);
     let mut msg = Dns::decode(bytes)?;
 
+    let questions = msg.questions.clone();
+
     let (lan, fwd) =
         msg.questions
             .into_iter()
@@ -117,17 +119,17 @@ fn handle_query(sock: &UdpSocket, buf: &[u8], raddr: SocketAddr) -> Result<()> {
             opcode: Opcode::Query,
             aa: true,
             tc: false,
-            rd: false,
-            ra: false,
+            rd: true,
+            ra: true,
             ad: false,
-            cd: true,
+            cd: false,
             rcode: if !answers.is_empty() {
                 RCode::NoError
             } else {
                 RCode::NXDomain
             },
         },
-        questions: Vec::new(),
+        questions,
         answers,
         authorities: resp_authorities,
         additionals: resp_additionals,
