@@ -38,10 +38,19 @@ fn handle_query(sock: &UdpSocket, buf: &[u8], raddr: SocketAddr) -> Result<()> {
     let bytes = Bytes::copy_from_slice(buf);
     let mut msg = Dns::decode(bytes)?;
 
-    let (lan, fwd) = msg
-        .questions
-        .into_iter()
-        .partition(|q| is_dhcp_known(q.domain_name.to_string()).unwrap_or(false));
+    let (lan, fwd) =
+        msg.questions
+            .into_iter()
+            .partition(|q| match is_dhcp_known(q.domain_name.to_string()) {
+                Ok(known) => known,
+                Err(e) => {
+                    println!(
+                        "[dnsd] can't read dhcp config, ignoring {}: {}",
+                        q.domain_name, e
+                    );
+                    false
+                }
+            });
 
     msg.questions = fwd;
 
