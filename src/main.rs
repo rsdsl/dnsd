@@ -64,7 +64,11 @@ fn handle_query(sock: UdpSocket, buf: &[u8], raddr: SocketAddr) -> Result<()> {
 
     let lan_resp = lan.into_iter().filter_map(|q| {
         if q.q_type == QType::A || q.q_type == QType::ALL {
-            let lease = dhcp_lease(q.domain_name.to_string()).unwrap().unwrap();
+            let net_id = subnet_id(&raddr.ip());
+            let lease = dhcp_lease(q.domain_name.to_string(), net_id)
+                .unwrap()
+                .unwrap();
+
             let answer = RR::A(A {
                 domain_name: q.domain_name,
                 ttl: lease
@@ -150,20 +154,41 @@ fn handle_query(sock: UdpSocket, buf: &[u8], raddr: SocketAddr) -> Result<()> {
     Ok(())
 }
 
-fn dhcp_lease(hostname: String) -> Result<Option<Lease>> {
-    let file = File::open("/data/dhcp4d.leases_eth0")?;
-    let leases: Vec<Lease> = serde_json::from_reader(&file)?;
-
+fn find_lease(hostname: String, leases: impl Iterator<Item = Lease>) -> Option<Lease> {
     for lease in leases {
         let lease_name = lease.hostname.clone().map(|name| name + ".");
         if lease_name == Some(hostname.clone()) {
-            return Ok(Some(lease));
+            return Some(lease);
         }
     }
 
-    Ok(None)
+    None
+}
+
+fn dhcp_lease(hostname: String, net_id: u8) -> Result<Option<Lease>> {
+    let file = File::open("/data/dhcp4d.leases_eth0")?;
+    let leases: Vec<Lease> = serde_json::from_reader(&file)?;
+
+    let same_subnet = find_lease(
+        hostname.clone(),
+        leases
+            .clone()
+            .into_iter()
+            .filter(|lease| subnet_id(&lease.address.into()) == net_id),
+    );
+
+    let any = find_lease(hostname, leases.into_iter());
+
+    Ok(same_subnet.or(any))
 }
 
 fn is_dhcp_known(hostname: String) -> Result<bool> {
-    Ok(dhcp_lease(hostname)?.is_some())
+    Ok(dhcp_lease(hostname, u8::MAX)?.is_some())
+}
+
+fn subnet_id(addr: &IpAddr) -> u8 {
+    match addr {
+        IpAddr::V4(v4) => v4.octets()[2],
+        IpAddr::V6(v6) => v6.octets()[7],
+    }
 }
