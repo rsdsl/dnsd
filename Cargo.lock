@@ -646,7 +646,7 @@ dependencies = [
 [[package]]
 name = "rsdsl_dhcp4d"
 version = "0.1.0"
-source = "git+https://github.com/rsdsl/dhcp4d.git#69475b1c85da475d8acdc5c05322742cee12b169"
+source = "git+https://github.com/rsdsl/dhcp4d.git#3c32e88e2447f56b48f737d70c771c44a35d42a9"
 dependencies = [
  "dhcproto",
  "ipnet",
