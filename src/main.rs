@@ -1,6 +1,6 @@
 use rsdsl_dnsd::error::{Error, Result};
 
-use std::fs::File;
+use std::fs::{self, File};
 use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -69,13 +69,14 @@ fn handle_query(sock: UdpSocket, buf: &[u8], raddr: SocketAddr) -> Result<()> {
                 .unwrap()
                 .unwrap();
 
+            let lease_ttl = match lease.expires.duration_since(SystemTime::now()) {
+                Ok(v) => v,
+                Err(_) => return None,
+            };
+
             let answer = RR::A(A {
                 domain_name: q.domain_name,
-                ttl: lease
-                    .expires
-                    .duration_since(SystemTime::now())
-                    .unwrap()
-                    .as_secs() as u32,
+                ttl: lease_ttl.as_secs() as u32,
                 ipv4_addr: lease.address,
             });
 
@@ -166,8 +167,24 @@ fn find_lease(hostname: String, leases: impl Iterator<Item = Lease>) -> Option<L
 }
 
 fn dhcp_lease(hostname: String, net_id: u8) -> Result<Option<Lease>> {
-    let file = File::open("/data/dhcp4d.leases_eth0")?;
-    let leases: Vec<Lease> = serde_json::from_reader(&file)?;
+    let mut leases = Vec::new();
+
+    let dir = fs::read_dir("/data")?.filter(|entry| {
+        entry
+            .as_ref()
+            .expect("can't access dir entry of /data")
+            .file_name()
+            .into_string()
+            .expect("lease file name is not valid UTF-8")
+            .starts_with("dhcp4d.leases_")
+    });
+
+    for entry in dir {
+        let file = File::open(entry?.path())?;
+        let mut net_leases: Vec<Lease> = serde_json::from_reader(&file)?;
+
+        leases.append(&mut net_leases);
+    }
 
     let same_subnet = find_lease(
         hostname.clone(),
