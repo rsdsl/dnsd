@@ -23,7 +23,7 @@ fn main() -> Result<()> {
 
         let is_local = match raddr.ip() {
             IpAddr::V4(addr) => addr.is_private(),
-            IpAddr::V6(_) => unreachable!(), // no IPv6 support for now
+            IpAddr::V6(_) => false, // no IPv6 support for now
         };
 
         if !is_local {
