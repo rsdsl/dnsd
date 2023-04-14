@@ -8,7 +8,7 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
-use dns_message_parser::question::QType;
+use dns_message_parser::question::{QType, Question};
 use dns_message_parser::rr::{A, RR};
 use dns_message_parser::{Dns, Flags, Opcode, RCode};
 use notify::event::{CreateKind, ModifyKind};
@@ -118,20 +118,24 @@ fn handle_query(
 
     let questions = msg.questions.clone();
 
-    let (lan, fwd) = msg.questions.into_iter().partition(|q| {
-        match is_dhcp_known(q.domain_name.to_string(), leases.clone()) {
-            Ok(known) => known,
-            Err(e) => {
-                println!(
-                    "[dnsd] can't read dhcp config, ignoring {}: {}",
-                    q.domain_name, e
-                );
-                false
+    let (lan, fwd): (_, Vec<Question>) =
+        msg.questions.into_iter().partition(|q| {
+            match is_dhcp_known(q.domain_name.to_string(), leases.clone()) {
+                Ok(known) => known,
+                Err(e) => {
+                    println!(
+                        "[dnsd] can't read dhcp config, ignoring {}: {}",
+                        q.domain_name, e
+                    );
+                    false
+                }
             }
-        }
-    });
+        });
 
-    msg.questions = fwd;
+    msg.questions = fwd
+        .into_iter()
+        .filter(|q| q.domain_name.to_string().matches('.').count() >= 2)
+        .collect();
 
     let lan_resp = lan.into_iter().filter_map(|q| {
         if q.q_type == QType::A || q.q_type == QType::ALL {
