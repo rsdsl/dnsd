@@ -2,6 +2,8 @@ use rsdsl_dnsd::error::{Error, Result};
 
 use std::fs::{self, File};
 use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::path::Path;
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
@@ -9,10 +11,74 @@ use bytes::Bytes;
 use dns_message_parser::question::QType;
 use dns_message_parser::rr::{A, RR};
 use dns_message_parser::{Dns, Flags, Opcode, RCode};
+use notify::event::{CreateKind, ModifyKind};
+use notify::{Event, EventKind, RecursiveMode, Watcher};
 use rsdsl_dhcp4d::lease::Lease;
+
+fn refresh_leases(cache: Arc<RwLock<Vec<Lease>>>) -> Result<()> {
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| match res {
+        Ok(event) => {
+            if event
+                .paths
+                .iter()
+                .any(|v| v.starts_with("/data/dhcp4d.leases_"))
+            {
+                match event.kind {
+                    EventKind::Create(kind) if kind == CreateKind::File => {
+                        read_leases(cache.clone()).expect("can't read lease files");
+                    }
+                    EventKind::Modify(kind) if matches!(kind, ModifyKind::Data(_)) => {
+                        read_leases(cache.clone()).expect("can't read lease files");
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Err(e) => println!("[dnsd] watch error: {:?}", e),
+    })?;
+
+    watcher.watch(Path::new("/data"), RecursiveMode::Recursive)?;
+
+    loop {
+        thread::sleep(Duration::MAX)
+    }
+}
+
+fn read_leases(cache: Arc<RwLock<Vec<Lease>>>) -> Result<()> {
+    let mut leases = Vec::new();
+
+    let dir = fs::read_dir("/data")?.filter(|entry| {
+        entry
+            .as_ref()
+            .expect("can't access dir entry of /data")
+            .file_name()
+            .into_string()
+            .expect("lease file name is not valid UTF-8")
+            .starts_with("dhcp4d.leases_")
+    });
+
+    for entry in dir {
+        let file = File::open(entry?.path())?;
+        let mut net_leases: Vec<Lease> = serde_json::from_reader(&file)?;
+
+        leases.append(&mut net_leases);
+    }
+
+    *cache.write().unwrap() = leases;
+    Ok(())
+}
 
 fn main() -> Result<()> {
     println!("[dnsd] init");
+
+    let leases = Arc::new(RwLock::new(Vec::new()));
+    read_leases(leases.clone())?;
+
+    let leases2 = leases.clone();
+    thread::spawn(move || match refresh_leases(leases2) {
+        Ok(_) => unreachable!(),
+        Err(e) => println!("{}", e),
+    });
 
     let sock = UdpSocket::bind("0.0.0.0:53")?;
 
@@ -33,39 +99,44 @@ fn main() -> Result<()> {
 
         let sock2 = sock.try_clone()?;
         let buf = buf.to_vec();
-        thread::spawn(move || match handle_query(sock2, &buf, raddr) {
+        let leases3 = leases.clone();
+        thread::spawn(move || match handle_query(sock2, &buf, raddr, leases3) {
             Ok(_) => {}
             Err(e) => println!("[dnsd] can't handle query from {}: {}", raddr, e),
         });
     }
 }
 
-fn handle_query(sock: UdpSocket, buf: &[u8], raddr: SocketAddr) -> Result<()> {
+fn handle_query(
+    sock: UdpSocket,
+    buf: &[u8],
+    raddr: SocketAddr,
+    leases: Arc<RwLock<Vec<Lease>>>,
+) -> Result<()> {
     let bytes = Bytes::copy_from_slice(buf);
     let mut msg = Dns::decode(bytes)?;
 
     let questions = msg.questions.clone();
 
-    let (lan, fwd) =
-        msg.questions
-            .into_iter()
-            .partition(|q| match is_dhcp_known(q.domain_name.to_string()) {
-                Ok(known) => known,
-                Err(e) => {
-                    println!(
-                        "[dnsd] can't read dhcp config, ignoring {}: {}",
-                        q.domain_name, e
-                    );
-                    false
-                }
-            });
+    let (lan, fwd) = msg.questions.into_iter().partition(|q| {
+        match is_dhcp_known(q.domain_name.to_string(), leases.clone()) {
+            Ok(known) => known,
+            Err(e) => {
+                println!(
+                    "[dnsd] can't read dhcp config, ignoring {}: {}",
+                    q.domain_name, e
+                );
+                false
+            }
+        }
+    });
 
     msg.questions = fwd;
 
     let lan_resp = lan.into_iter().filter_map(|q| {
         if q.q_type == QType::A || q.q_type == QType::ALL {
             let net_id = subnet_id(&raddr.ip());
-            let lease = dhcp_lease(q.domain_name.to_string(), net_id)
+            let lease = dhcp_lease(q.domain_name.to_string(), net_id, leases.clone())
                 .unwrap()
                 .unwrap();
 
@@ -166,25 +237,12 @@ fn find_lease(hostname: String, leases: impl Iterator<Item = Lease>) -> Option<L
     None
 }
 
-fn dhcp_lease(hostname: String, net_id: u8) -> Result<Option<Lease>> {
-    let mut leases = Vec::new();
-
-    let dir = fs::read_dir("/data")?.filter(|entry| {
-        entry
-            .as_ref()
-            .expect("can't access dir entry of /data")
-            .file_name()
-            .into_string()
-            .expect("lease file name is not valid UTF-8")
-            .starts_with("dhcp4d.leases_")
-    });
-
-    for entry in dir {
-        let file = File::open(entry?.path())?;
-        let mut net_leases: Vec<Lease> = serde_json::from_reader(&file)?;
-
-        leases.append(&mut net_leases);
-    }
+fn dhcp_lease(
+    hostname: String,
+    net_id: u8,
+    leases: Arc<RwLock<Vec<Lease>>>,
+) -> Result<Option<Lease>> {
+    let leases = leases.read().unwrap();
 
     let same_subnet = find_lease(
         hostname.clone(),
@@ -194,13 +252,13 @@ fn dhcp_lease(hostname: String, net_id: u8) -> Result<Option<Lease>> {
             .filter(|lease| subnet_id(&lease.address.into()) == net_id),
     );
 
-    let any = find_lease(hostname, leases.into_iter());
+    let any = find_lease(hostname, leases.clone().into_iter());
 
     Ok(same_subnet.or(any))
 }
 
-fn is_dhcp_known(hostname: String) -> Result<bool> {
-    Ok(dhcp_lease(hostname, u8::MAX)?.is_some())
+fn is_dhcp_known(hostname: String, leases: Arc<RwLock<Vec<Lease>>>) -> Result<bool> {
+    Ok(dhcp_lease(hostname, u8::MAX, leases)?.is_some())
 }
 
 fn subnet_id(addr: &IpAddr) -> u8 {

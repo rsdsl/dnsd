@@ -14,6 +14,8 @@ pub enum Error {
     DnsDecode(#[from] dns_message_parser::DecodeError),
     #[error("dns_message_parser encode: {0}")]
     DnsEncode(#[from] dns_message_parser::EncodeError),
+    #[error("notify: {0}")]
+    Notify(#[from] notify::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

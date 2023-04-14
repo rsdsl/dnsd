@@ -667,6 +667,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "dns-message-parser",
+ "notify",
  "rsdsl_dhcp4d",
  "serde_json",
  "thiserror",
