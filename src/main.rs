@@ -11,23 +11,23 @@ use bytes::Bytes;
 use dns_message_parser::question::{QType, Question};
 use dns_message_parser::rr::{A, RR};
 use dns_message_parser::{Dns, Flags, Opcode, RCode};
-use notify::event::{CreateKind, ModifyKind};
+use notify::event::{AccessKind, AccessMode, CreateKind};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use rsdsl_dhcp4d::lease::Lease;
 
 fn refresh_leases(cache: Arc<RwLock<Vec<Lease>>>) -> Result<()> {
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| match res {
         Ok(event) => {
-            if event
-                .paths
-                .iter()
-                .any(|v| v.starts_with("/data/dhcp4d.leases_"))
-            {
+            if event.paths.iter().any(|v| {
+                v.to_str()
+                    .expect("lease file name is not valid UTF-8")
+                    .starts_with("/data/dhcp4d.leases_")
+            }) {
                 match event.kind {
                     EventKind::Create(kind) if kind == CreateKind::File => {
                         read_leases(cache.clone()).expect("can't read lease files");
                     }
-                    EventKind::Modify(kind) if matches!(kind, ModifyKind::Data(_)) => {
+                    EventKind::Access(kind) if kind == AccessKind::Close(AccessMode::Write) => {
                         read_leases(cache.clone()).expect("can't read lease files");
                     }
                     _ => {}
