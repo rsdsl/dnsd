@@ -58,8 +58,21 @@ fn read_leases(cache: Arc<RwLock<Vec<Lease>>>) -> Result<()> {
     });
 
     for entry in dir {
-        let file = File::open(entry?.path())?;
-        let mut net_leases: Vec<Lease> = serde_json::from_reader(&file)?;
+        let entry = entry?;
+
+        let file = File::open(entry.path())?;
+        let mut net_leases: Vec<Lease> = match serde_json::from_reader(&file) {
+            Ok(v) => v,
+            Err(e) => {
+                println!(
+                    "[dnsd] ignore broken lease file {}: {}",
+                    entry.path().display(),
+                    e
+                );
+
+                continue;
+            }
+        };
 
         leases.append(&mut net_leases);
     }
