@@ -109,7 +109,14 @@ fn main() -> Result<()> {
         let is_local = match raddr.ip() {
             IpAddr::V4(addr) => addr.is_private(),
             IpAddr::V6(addr) => {
-                he.tn64.contains(&addr) || he.rt64.contains(&addr) || he.rt48.contains(&addr)
+                he.tn64.contains(&addr)
+                    || he.rt64.contains(&addr)
+                    || he.rt48.contains(&addr)
+                    || if let Some(addr) = addr.to_ipv4_mapped() {
+                        addr.is_private()
+                    } else {
+                        false
+                    }
             }
         };
 
