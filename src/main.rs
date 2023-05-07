@@ -7,6 +7,7 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
+use byteorder::{ByteOrder, NetworkEndian as NE};
 use bytes::Bytes;
 use dns_message_parser::question::{QType, Question};
 use dns_message_parser::rr::{A, RR};
@@ -14,6 +15,7 @@ use dns_message_parser::{Dns, Flags, Opcode, RCode};
 use notify::event::{AccessKind, AccessMode, CreateKind};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use rsdsl_dhcp4d::lease::Lease;
+use rsdsl_he_config::{Config, UsableConfig};
 
 fn refresh_leases(cache: Arc<RwLock<Vec<Lease>>>) -> Result<()> {
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| match res {
@@ -84,6 +86,10 @@ fn read_leases(cache: Arc<RwLock<Vec<Lease>>>) -> Result<()> {
 fn main() -> Result<()> {
     println!("[dnsd] init");
 
+    let mut file = File::open("/data/he6in4.conf")?;
+    let he: Config = serde_json::from_reader(&mut file)?;
+    let he: UsableConfig = he.into();
+
     let leases = Arc::new(RwLock::new(Vec::new()));
     read_leases(leases.clone())?;
 
@@ -93,7 +99,7 @@ fn main() -> Result<()> {
         Err(e) => println!("{}", e),
     });
 
-    let sock = UdpSocket::bind("0.0.0.0:53")?;
+    let sock = UdpSocket::bind("[::]:53")?;
 
     loop {
         let mut buf = [0; 1024];
@@ -102,7 +108,9 @@ fn main() -> Result<()> {
 
         let is_local = match raddr.ip() {
             IpAddr::V4(addr) => addr.is_private(),
-            IpAddr::V6(_) => false, // no IPv6 support for now
+            IpAddr::V6(addr) => {
+                he.tn64.contains(&addr) || he.rt64.contains(&addr) || he.rt48.contains(&addr)
+            }
         };
 
         if !is_local {
@@ -281,6 +289,6 @@ fn is_dhcp_known(hostname: String, leases: Arc<RwLock<Vec<Lease>>>) -> Result<bo
 fn subnet_id(addr: &IpAddr) -> u8 {
     match addr {
         IpAddr::V4(v4) => v4.octets()[2],
-        IpAddr::V6(v6) => v6.octets()[7],
+        IpAddr::V6(v6) => NE::read_u16(&v6.octets()[6..8]) as u8,
     }
 }
