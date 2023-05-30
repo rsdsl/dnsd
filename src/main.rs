@@ -107,13 +107,14 @@ fn main() -> Result<()> {
         let buf = &buf[..n];
 
         let is_local = match raddr.ip() {
-            IpAddr::V4(addr) => addr.is_private(),
+            IpAddr::V4(addr) => addr.is_private() || addr.is_loopback(),
             IpAddr::V6(addr) => {
                 he.tn64.contains(&addr)
                     || he.rt64.contains(&addr)
                     || he.rt48.contains(&addr)
+                    || addr.is_loopback()
                     || if let Some(addr) = addr.to_ipv4_mapped() {
-                        addr.is_private()
+                        addr.is_private() || addr.is_loopback()
                     } else {
                         false
                     }
