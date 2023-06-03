@@ -594,7 +594,7 @@ dependencies = [
 [[package]]
 name = "rsdsl_dhcp4d"
 version = "0.1.5"
-source = "git+https://github.com/rsdsl/dhcp4d.git#1280344c62a32e490690067a619389c2a2b2c12d"
+source = "git+https://github.com/rsdsl/dhcp4d.git#5ad7443a5bf991d2aebdbfa563808f6e39976902"
 dependencies = [
  "dhcproto",
  "ipnet",
@@ -642,8 +642,8 @@ dependencies = [
 
 [[package]]
 name = "rsdsl_netlinkd"
-version = "0.3.0"
-source = "git+https://github.com/rsdsl/netlinkd.git#e3178b6356e8484fa83020f647ad95918a1329ed"
+version = "0.3.1"
+source = "git+https://github.com/rsdsl/netlinkd.git#6e73714f0f184938b317807703c4ff8d434a6a93"
 dependencies = [
  "futures-util",
  "netlink-packet-route",
