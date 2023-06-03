@@ -36,7 +36,7 @@ fn refresh_leases(cache: Arc<RwLock<Vec<Lease>>>) -> Result<()> {
                 }
             }
         }
-        Err(e) => println!("[dnsd] watch error: {:?}", e),
+        Err(e) => println!("watch error: {:?}", e),
     })?;
 
     watcher.watch(Path::new("/data"), RecursiveMode::Recursive)?;
@@ -66,11 +66,7 @@ fn read_leases(cache: Arc<RwLock<Vec<Lease>>>) -> Result<()> {
         let mut net_leases: Vec<Lease> = match serde_json::from_reader(&file) {
             Ok(v) => v,
             Err(e) => {
-                println!(
-                    "[dnsd] ignore broken lease file {}: {}",
-                    entry.path().display(),
-                    e
-                );
+                println!("ignore broken lease file {}: {}", entry.path().display(), e);
 
                 continue;
             }
@@ -84,7 +80,7 @@ fn read_leases(cache: Arc<RwLock<Vec<Lease>>>) -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    println!("[dnsd] init");
+    println!("init");
 
     let mut file = File::open("/data/he6in4.conf")?;
     let he: Config = serde_json::from_reader(&mut file)?;
@@ -122,7 +118,7 @@ fn main() -> Result<()> {
         };
 
         if !is_local {
-            println!("[dnsd] drop wan pkt from {}", raddr);
+            println!("drop wan pkt from {}", raddr);
             continue;
         }
 
@@ -131,7 +127,7 @@ fn main() -> Result<()> {
         let leases3 = leases.clone();
         thread::spawn(move || match handle_query(sock2, &buf, raddr, leases3) {
             Ok(_) => {}
-            Err(e) => println!("[dnsd] can't handle query from {}: {}", raddr, e),
+            Err(e) => println!("can't handle query from {}: {}", raddr, e),
         });
     }
 }
@@ -152,10 +148,7 @@ fn handle_query(
             match is_dhcp_known(q.domain_name.to_string(), leases.clone()) {
                 Ok(known) => known,
                 Err(e) => {
-                    println!(
-                        "[dnsd] can't read dhcp config, ignoring {}: {}",
-                        q.domain_name, e
-                    );
+                    println!("can't read dhcp config, ignoring {}: {}", q.domain_name, e);
                     false
                 }
             }
@@ -184,7 +177,7 @@ fn handle_query(
                 ipv4_addr: lease.address,
             });
 
-            println!("[dnsd] {} dhcp {}", raddr, answer);
+            println!("{} dhcp {}", raddr, answer);
             Some(answer)
         } else {
             None
@@ -220,7 +213,7 @@ fn handle_query(
         resp_additionals = resp.additionals;
 
         for answer in &resp_answers {
-            println!("[dnsd] {} fwrd {}", raddr, answer);
+            println!("{} fwrd {}", raddr, answer);
         }
     }
 
