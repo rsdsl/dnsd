@@ -17,6 +17,8 @@ use notify::{Event, EventKind, RecursiveMode, Watcher};
 use rsdsl_dhcp4d::lease::Lease;
 use rsdsl_he_config::{Config, UsableConfig};
 
+const UPSTREAM: &str = "8.8.8.8:53";
+
 fn refresh_leases(cache: Arc<RwLock<Vec<Lease>>>) -> Result<()> {
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| match res {
         Ok(event) => {
@@ -194,7 +196,7 @@ fn handle_query(
         let uplink = UdpSocket::bind("0.0.0.0:0")?;
 
         uplink.set_read_timeout(Some(Duration::from_secs(1)))?;
-        uplink.connect("8.8.8.8:53")?;
+        uplink.connect(UPSTREAM)?;
 
         let n = uplink.send(&bytes)?;
         if n != bytes.len() {

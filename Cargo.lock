@@ -646,8 +646,8 @@ dependencies = [
 
 [[package]]
 name = "rsdsl_dhcp4d"
-version = "0.1.6"
-source = "git+https://github.com/rsdsl/dhcp4d.git#f6af43bb491c572ca205b32fe2bcef94942045f1"
+version = "0.1.7"
+source = "git+https://github.com/rsdsl/dhcp4d.git#66049256604cc2d1212b1c59cbe6719ddd70b805"
 dependencies = [
  "dhcproto",
  "ipnet",
@@ -687,25 +687,36 @@ dependencies = [
 
 [[package]]
 name = "rsdsl_ip_config"
-version = "0.1.0"
-source = "git+https://github.com/rsdsl/ip_config.git#e13adb9cc9367ad93f1e947335b0d56108015999"
+version = "0.2.2"
+source = "git+https://github.com/rsdsl/ip_config.git#3239a5eeef22de4c50d4d00a9f51bebb5207633c"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "rsdsl_netlinkd"
-version = "0.3.2"
-source = "git+https://github.com/rsdsl/netlinkd.git#e5641588803c096312fb271afa0c7f6ddc4516c0"
+version = "0.6.2"
+source = "git+https://github.com/rsdsl/netlinkd.git#3f8ae378a6f7c1b1b4d4dbc8f9e3ffada6342721"
 dependencies = [
+ "futures",
  "futures-util",
+ "ipnet",
  "netlink-packet-route",
  "notify",
  "rsdsl_ip_config",
+ "rsdsl_pd_config",
  "rtnetlink",
  "serde_json",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "rsdsl_pd_config"
+version = "0.1.0"
+source = "git+https://github.com/rsdsl/pd_config.git#334b2ce359208f0473353fd7ef60c991de4db42d"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
