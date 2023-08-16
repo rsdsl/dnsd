@@ -15,7 +15,6 @@ use dns_message_parser::{Dns, Flags, Opcode, RCode};
 use notify::event::{AccessKind, AccessMode, CreateKind};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use rsdsl_dhcp4d::lease::Lease;
-use rsdsl_he_config::{Config, UsableConfig};
 
 const UPSTREAM: &str = "8.8.8.8:53";
 
@@ -84,10 +83,6 @@ fn read_leases(cache: Arc<RwLock<Vec<Lease>>>) -> Result<()> {
 fn main() -> Result<()> {
     println!("init");
 
-    let mut file = File::open("/data/he6in4.conf")?;
-    let he: Config = serde_json::from_reader(&mut file)?;
-    let he: UsableConfig = he.into();
-
     let leases = Arc::new(RwLock::new(Vec::new()));
     read_leases(leases.clone())?;
 
@@ -103,26 +98,6 @@ fn main() -> Result<()> {
         let mut buf = [0; 1024];
         let (n, raddr) = sock.recv_from(&mut buf)?;
         let buf = &buf[..n];
-
-        let is_local = match raddr.ip() {
-            IpAddr::V4(addr) => addr.is_private() || addr.is_loopback(),
-            IpAddr::V6(addr) => {
-                he.tn64.contains(&addr)
-                    || he.rt64.contains(&addr)
-                    || he.rt48.contains(&addr)
-                    || addr.is_loopback()
-                    || if let Some(addr) = addr.to_ipv4_mapped() {
-                        addr.is_private() || addr.is_loopback()
-                    } else {
-                        false
-                    }
-            }
-        };
-
-        if !is_local {
-            println!("drop wan pkt from {}", raddr);
-            continue;
-        }
 
         let sock2 = sock.try_clone()?;
         let buf = buf.to_vec();

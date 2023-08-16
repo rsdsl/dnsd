@@ -671,18 +671,8 @@ dependencies = [
  "dns-message-parser",
  "notify",
  "rsdsl_dhcp4d",
- "rsdsl_he_config",
  "serde_json",
  "thiserror",
-]
-
-[[package]]
-name = "rsdsl_he_config"
-version = "0.1.0"
-source = "git+https://github.com/rsdsl/he_config.git#602b64314e53db90923a32c93ebe95c12db69d4c"
-dependencies = [
- "ipnet",
- "serde",
 ]
 
 [[package]]
