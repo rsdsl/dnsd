@@ -161,6 +161,8 @@ fn handle_query(
         }
     });
 
+    let mut rcode = RCode::NoError;
+
     let mut resp_answers = Vec::new();
     let mut resp_authorities = Vec::new();
     let mut resp_additionals = Vec::new();
@@ -185,6 +187,8 @@ fn handle_query(
         let bytes = Bytes::copy_from_slice(buf);
         let resp = Dns::decode(bytes)?;
 
+        rcode = resp.flags.rcode;
+
         resp_answers = resp.answers;
         resp_authorities = resp.authorities;
         resp_additionals = resp.additionals;
@@ -207,11 +211,7 @@ fn handle_query(
             ra: true,
             ad: false,
             cd: false,
-            rcode: if !answers.is_empty() {
-                RCode::NoError
-            } else {
-                RCode::NXDomain
-            },
+            rcode,
         },
         questions,
         answers,
