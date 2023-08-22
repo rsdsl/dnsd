@@ -1,8 +1,10 @@
 use rsdsl_dnsd::error::{Error, Result};
 
+use std::cell::RefCell;
 use std::fs::{self, File};
 use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -10,8 +12,9 @@ use std::time::{Duration, SystemTime};
 use byteorder::{ByteOrder, NetworkEndian as NE};
 use bytes::Bytes;
 use dns_message_parser::question::{QType, Question};
-use dns_message_parser::rr::{A, RR};
+use dns_message_parser::rr::{Class, A, PTR, RR};
 use dns_message_parser::{Dns, DomainName, Flags, Opcode, RCode};
+use ipnet::IpNet;
 use notify::event::{AccessKind, AccessMode, CreateKind};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use rsdsl_dhcp4d::lease::Lease;
@@ -139,10 +142,18 @@ fn handle_query(
 
     let questions = msg.questions.clone();
 
+    let ptr_nx = RefCell::new(false);
+
     let (lan, fwd): (_, Vec<Question>) =
         msg.questions.into_iter().partition(|q| {
             match is_dhcp_known(&usable_name(domain, &q.domain_name), leases.clone()) {
-                Ok(known) => known,
+                Ok(known) => {
+                    if q.q_type == QType::PTR && !known {
+                        *ptr_nx.borrow_mut() = true;
+                    }
+
+                    known
+                }
                 Err(e) => {
                     println!("can't read dhcp config, ignoring {}: {}", q.domain_name, e);
                     false
@@ -153,6 +164,13 @@ fn handle_query(
     msg.questions = fwd
         .into_iter()
         .filter(|q| q.domain_name.to_string().matches('.').count() >= 2)
+        .filter(|q| {
+            !IpNet::from_str("10.128.0.0/16").unwrap().contains(
+                &usable_name(domain, &q.domain_name)
+                    .parse_arpa_name()
+                    .expect("can't parse arpa name"),
+            )
+        })
         .collect();
 
     let lan_resp = lan.into_iter().filter_map(|q| {
@@ -177,12 +195,52 @@ fn handle_query(
 
             println!("{} dhcp {}", raddr, answer);
             Some(answer)
+        } else if q.q_type == QType::PTR {
+            let lease = dhcp_lease(&hostname, u8::MAX, leases.clone())
+                .unwrap()
+                .unwrap();
+
+            let name = match lease.hostname.map(|name| {
+                name + "."
+                    + &domain
+                        .as_ref()
+                        .map(|domain| domain.to_utf8())
+                        .unwrap_or(String::new())
+            }) {
+                Some(name) => name,
+                None => {
+                    *ptr_nx.borrow_mut() = true;
+                    return None;
+                }
+            };
+
+            let lease_ttl = match lease.expires.duration_since(SystemTime::now()) {
+                Ok(v) => v,
+                Err(_) => {
+                    *ptr_nx.borrow_mut() = true;
+                    return None;
+                }
+            };
+
+            let answer = RR::PTR(PTR {
+                domain_name: q.domain_name,
+                ttl: lease_ttl.as_secs() as u32,
+                class: Class::IN,
+                ptr_d_name: name.parse().expect("can't parse hostname"),
+            });
+
+            println!("{} dhcp {}", raddr, answer);
+            Some(answer)
         } else {
             None
         }
     });
 
-    let mut rcode = RCode::NoError;
+    let mut rcode = if *ptr_nx.borrow() {
+        RCode::NXDomain
+    } else {
+        RCode::NoError
+    };
 
     let mut resp_answers = Vec::new();
     let mut resp_authorities = Vec::new();
@@ -251,7 +309,19 @@ fn handle_query(
 }
 
 fn find_lease(hostname: &Name, mut leases: impl Iterator<Item = Lease>) -> Option<Lease> {
-    leases.find(|lease| lease.hostname.clone().map(|name| name + ".") == Some(hostname.to_utf8()))
+    leases.find(|lease| {
+        if Name::from_str("in-addr.arpa.")
+            .unwrap()
+            .zone_of(&hostname.base_name())
+        {
+            IpNet::new(lease.address.into(), 32).unwrap()
+                == hostname
+                    .parse_arpa_name()
+                    .expect("can't parse arpa hostname")
+        } else {
+            lease.hostname.clone().map(|name| name + ".") == Some(hostname.to_utf8())
+        }
+    })
 }
 
 fn dhcp_lease(

@@ -9,6 +9,7 @@ edition = "2021"
 byteorder = "1.4.3"
 bytes = "1.4.0"
 dns-message-parser = "0.7.0"
+ipnet = "2.5.0"
 notify = "5.1.0"
 rsdsl_dhcp4d = { git = "https://github.com/rsdsl/dhcp4d.git", version = "0.1.6" }
 serde_json = "1.0"

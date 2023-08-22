@@ -687,6 +687,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "dns-message-parser",
+ "ipnet",
  "notify",
  "rsdsl_dhcp4d",
  "serde_json",
