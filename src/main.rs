@@ -20,7 +20,7 @@ use notify::{Event, EventKind, RecursiveMode, Watcher};
 use rsdsl_dhcp4d::lease::Lease;
 use trust_dns_proto::rr::Name;
 
-const UPSTREAM: &str = "8.8.8.8:53";
+const UPSTREAM: &str = "[2620:fe::fe]:53";
 
 fn refresh_leases(cache: Arc<RwLock<Vec<Lease>>>) -> Result<()> {
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| match res {
@@ -253,7 +253,7 @@ fn handle_query(
     if !msg.questions.is_empty() {
         let bytes = msg.encode()?;
 
-        let uplink = UdpSocket::bind("0.0.0.0:0")?;
+        let uplink = UdpSocket::bind("[::]:0")?;
 
         uplink.set_read_timeout(Some(Duration::from_secs(1)))?;
         uplink.connect(UPSTREAM)?;
