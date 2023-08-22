@@ -16,6 +16,8 @@ pub enum Error {
     DnsEncode(#[from] dns_message_parser::EncodeError),
     #[error("notify: {0}")]
     Notify(#[from] notify::Error),
+    #[error("trust_dns_proto: {0}")]
+    TrustDnsProto(#[from] trust_dns_proto::error::ProtoError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

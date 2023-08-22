@@ -11,7 +11,7 @@ use byteorder::{ByteOrder, NetworkEndian as NE};
 use bytes::Bytes;
 use dns_message_parser::question::{QType, Question};
 use dns_message_parser::rr::{A, RR};
-use dns_message_parser::{Dns, Flags, Opcode, RCode};
+use dns_message_parser::{Dns, DomainName, Flags, Opcode, RCode};
 use notify::event::{AccessKind, AccessMode, CreateKind};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use rsdsl_dhcp4d::lease::Lease;
@@ -93,6 +93,20 @@ fn main() -> Result<()> {
         Err(e) => println!("{}", e),
     });
 
+    let domain = match fs::read_to_string("/data/dnsd.domain") {
+        Ok(v) => match Name::from_utf8(v) {
+            Ok(w) => Some(w),
+            Err(e) => {
+                println!("can't get search domain: {}", e);
+                None
+            }
+        },
+        Err(e) => {
+            println!("can't get search domain: {}", e);
+            None
+        }
+    };
+
     let sock = UdpSocket::bind("[::]:53")?;
 
     loop {
@@ -100,17 +114,21 @@ fn main() -> Result<()> {
         let (n, raddr) = sock.recv_from(&mut buf)?;
         let buf = &buf[..n];
 
+        let domain2 = domain.clone();
         let sock2 = sock.try_clone()?;
         let buf = buf.to_vec();
         let leases3 = leases.clone();
-        thread::spawn(move || match handle_query(sock2, &buf, raddr, leases3) {
-            Ok(_) => {}
-            Err(e) => println!("can't handle query from {}: {}", raddr, e),
-        });
+        thread::spawn(
+            move || match handle_query(&domain2, sock2, &buf, raddr, leases3) {
+                Ok(_) => {}
+                Err(e) => println!("can't handle query from {}: {}", raddr, e),
+            },
+        );
     }
 }
 
 fn handle_query(
+    domain: &Option<Name>,
     sock: UdpSocket,
     buf: &[u8],
     raddr: SocketAddr,
@@ -123,10 +141,7 @@ fn handle_query(
 
     let (lan, fwd): (_, Vec<Question>) =
         msg.questions.into_iter().partition(|q| {
-            match is_dhcp_known(
-                &Name::from_utf8(q.domain_name.to_string()).expect("not a valid UTF-8 domain name"),
-                leases.clone(),
-            ) {
+            match is_dhcp_known(&usable_name(domain, &q.domain_name), leases.clone()) {
                 Ok(known) => known,
                 Err(e) => {
                     println!("can't read dhcp config, ignoring {}: {}", q.domain_name, e);
@@ -141,8 +156,7 @@ fn handle_query(
         .collect();
 
     let lan_resp = lan.into_iter().filter_map(|q| {
-        let hostname =
-            Name::from_utf8(q.domain_name.to_string()).expect("not a valid UTF-8 domain name");
+        let hostname = usable_name(domain, &q.domain_name);
 
         if q.q_type == QType::A {
             let net_id = subnet_id(&raddr.ip());
@@ -274,5 +288,19 @@ fn subnet_id(addr: &IpAddr) -> u8 {
     match addr {
         IpAddr::V4(v4) => v4.octets()[2],
         IpAddr::V6(v6) => NE::read_u16(&v6.octets()[6..8]) as u8,
+    }
+}
+
+fn usable_name(domain: &Option<Name>, name: &DomainName) -> Name {
+    let as_name = Name::from_utf8(name.to_string()).expect("not a valid UTF-8 domain name");
+
+    match domain {
+        Some(domain) if domain.zone_of(&as_name) => {
+            let mut labels = as_name.iter();
+
+            labels.nth_back(domain.iter().len() - 1);
+            Name::from_labels(labels).expect("labels became invalid by removing the domain")
+        }
+        _ => as_name,
     }
 }
