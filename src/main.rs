@@ -165,11 +165,15 @@ fn handle_query(
         .into_iter()
         .filter(|q| q.domain_name.to_string().matches('.').count() >= 2)
         .filter(|q| {
-            !IpNet::from_str("10.128.0.0/16").unwrap().contains(
-                &usable_name(domain, &q.domain_name)
-                    .parse_arpa_name()
-                    .expect("can't parse arpa name"),
-            )
+            if q.domain_name.to_string().ends_with(".arpa.") {
+                !IpNet::from_str("10.128.0.0/16").unwrap().contains(
+                    &usable_name(domain, &q.domain_name)
+                        .parse_arpa_name()
+                        .expect("can't parse arpa name"),
+                )
+            } else {
+                true
+            }
         })
         .collect();
 
