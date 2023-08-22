@@ -250,14 +250,8 @@ fn handle_query(
     Ok(())
 }
 
-fn find_lease(hostname: &Name, leases: impl Iterator<Item = Lease>) -> Option<Lease> {
-    for lease in leases {
-        if lease.hostname.clone().map(|name| name + ".") == Some(hostname.to_utf8()) {
-            return Some(lease);
-        }
-    }
-
-    None
+fn find_lease(hostname: &Name, mut leases: impl Iterator<Item = Lease>) -> Option<Lease> {
+    leases.find(|lease| lease.hostname.clone().map(|name| name + ".") == Some(hostname.to_utf8()))
 }
 
 fn dhcp_lease(
