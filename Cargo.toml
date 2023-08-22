@@ -13,3 +13,4 @@ notify = "5.1.0"
 rsdsl_dhcp4d = { git = "https://github.com/rsdsl/dhcp4d.git", version = "0.1.6" }
 serde_json = "1.0"
 thiserror = "1.0"
+trust-dns-proto = "0.22.0"

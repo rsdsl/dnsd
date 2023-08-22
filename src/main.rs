@@ -15,6 +15,7 @@ use dns_message_parser::{Dns, Flags, Opcode, RCode};
 use notify::event::{AccessKind, AccessMode, CreateKind};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use rsdsl_dhcp4d::lease::Lease;
+use trust_dns_proto::rr::Name;
 
 const UPSTREAM: &str = "8.8.8.8:53";
 
@@ -122,7 +123,10 @@ fn handle_query(
 
     let (lan, fwd): (_, Vec<Question>) =
         msg.questions.into_iter().partition(|q| {
-            match is_dhcp_known(q.domain_name.to_string(), leases.clone()) {
+            match is_dhcp_known(
+                &Name::from_utf8(q.domain_name.to_string()).expect("not a valid UTF-8 domain name"),
+                leases.clone(),
+            ) {
                 Ok(known) => known,
                 Err(e) => {
                     println!("can't read dhcp config, ignoring {}: {}", q.domain_name, e);
@@ -137,9 +141,12 @@ fn handle_query(
         .collect();
 
     let lan_resp = lan.into_iter().filter_map(|q| {
-        if q.q_type == QType::A || q.q_type == QType::ALL {
+        let hostname =
+            Name::from_utf8(q.domain_name.to_string()).expect("not a valid UTF-8 domain name");
+
+        if q.q_type == QType::A {
             let net_id = subnet_id(&raddr.ip());
-            let lease = dhcp_lease(q.domain_name.to_string(), net_id, leases.clone())
+            let lease = dhcp_lease(&hostname, net_id, leases.clone())
                 .unwrap()
                 .unwrap();
 
@@ -229,10 +236,9 @@ fn handle_query(
     Ok(())
 }
 
-fn find_lease(hostname: String, leases: impl Iterator<Item = Lease>) -> Option<Lease> {
+fn find_lease(hostname: &Name, leases: impl Iterator<Item = Lease>) -> Option<Lease> {
     for lease in leases {
-        let lease_name = lease.hostname.clone().map(|name| name + ".");
-        if lease_name == Some(hostname.clone()) {
+        if lease.hostname.clone().map(|name| name + ".") == Some(hostname.to_utf8()) {
             return Some(lease);
         }
     }
@@ -241,14 +247,14 @@ fn find_lease(hostname: String, leases: impl Iterator<Item = Lease>) -> Option<L
 }
 
 fn dhcp_lease(
-    hostname: String,
+    hostname: &Name,
     net_id: u8,
     leases: Arc<RwLock<Vec<Lease>>>,
 ) -> Result<Option<Lease>> {
     let leases = leases.read().unwrap();
 
     let same_subnet = find_lease(
-        hostname.clone(),
+        hostname,
         leases
             .clone()
             .into_iter()
@@ -260,7 +266,7 @@ fn dhcp_lease(
     Ok(same_subnet.or(any))
 }
 
-fn is_dhcp_known(hostname: String, leases: Arc<RwLock<Vec<Lease>>>) -> Result<bool> {
+fn is_dhcp_known(hostname: &Name, leases: Arc<RwLock<Vec<Lease>>>) -> Result<bool> {
     Ok(dhcp_lease(hostname, u8::MAX, leases)?.is_some())
 }
 
