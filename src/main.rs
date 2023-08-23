@@ -165,7 +165,9 @@ fn handle_query(
         .into_iter()
         .filter(|q| q.domain_name.to_string().matches('.').count() >= 2)
         .filter(|q| {
-            if q.domain_name.to_string().ends_with(".arpa.") {
+            if q.domain_name.to_string().ends_with(".in-addr.arpa.")
+                && q.domain_name.to_string().matches('.').count() <= 6
+            {
                 !IpNet::from_str("10.128.0.0/16").unwrap().contains(
                     &usable_name(domain, &q.domain_name)
                         .parse_arpa_name()
@@ -314,9 +316,7 @@ fn handle_query(
 
 fn find_lease(hostname: &Name, mut leases: impl Iterator<Item = Lease>) -> Option<Lease> {
     leases.find(|lease| {
-        if Name::from_str("in-addr.arpa.")
-            .unwrap()
-            .zone_of(&hostname.base_name())
+        if Name::from_str("in-addr.arpa.").unwrap().zone_of(hostname) && hostname.iter().len() <= 6
         {
             IpNet::new(lease.address.into(), 32).unwrap()
                 == hostname.parse_arpa_name().expect("can't parse arpa name")
