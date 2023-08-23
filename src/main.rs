@@ -319,9 +319,7 @@ fn find_lease(hostname: &Name, mut leases: impl Iterator<Item = Lease>) -> Optio
             .zone_of(&hostname.base_name())
         {
             IpNet::new(lease.address.into(), 32).unwrap()
-                == hostname
-                    .parse_arpa_name()
-                    .expect("can't parse arpa hostname")
+                == hostname.parse_arpa_name().expect("can't parse arpa name")
         } else {
             lease.hostname.clone().map(|name| name + ".") == Some(hostname.to_utf8())
         }
