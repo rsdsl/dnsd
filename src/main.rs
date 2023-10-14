@@ -3,7 +3,6 @@ use rsdsl_dnsd::error::{Error, Result};
 use std::cell::RefCell;
 use std::fs::{self, File};
 use std::net::{IpAddr, SocketAddr, UdpSocket};
-use std::path::Path;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -15,39 +14,27 @@ use dns_message_parser::question::{QType, Question};
 use dns_message_parser::rr::{Class, A, PTR, RR};
 use dns_message_parser::{Dns, DomainName, Flags, Opcode, RCode};
 use ipnet::IpNet;
-use notify::event::{AccessKind, AccessMode, CreateKind};
-use notify::{Event, EventKind, RecursiveMode, Watcher};
 use rsdsl_dhcp4d::lease::Lease;
+use signal_hook::{consts::SIGUSR1, iterator::Signals};
 use trust_dns_proto::rr::Name;
 
 const UPSTREAM: &str = "[2620:fe::fe]:53";
 
 fn refresh_leases(cache: Arc<RwLock<Vec<Lease>>>) -> Result<()> {
-    let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| match res {
-        Ok(event) => {
-            if event.paths.iter().any(|v| {
-                v.to_str()
-                    .expect("lease file name is not valid UTF-8")
-                    .starts_with("/data/dhcp4d.leases_")
-            }) {
-                match event.kind {
-                    EventKind::Create(kind) if kind == CreateKind::File => {
-                        read_leases(cache.clone()).expect("can't read lease files");
-                    }
-                    EventKind::Access(kind) if kind == AccessKind::Close(AccessMode::Write) => {
-                        read_leases(cache.clone()).expect("can't read lease files");
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Err(e) => println!("watch error: {:?}", e),
-    })?;
+    let mut signals = Signals::new([SIGUSR1])?;
+    for _ in signals.forever() {
+        read_leases(cache.clone())?;
+    }
 
-    watcher.watch(Path::new("/data"), RecursiveMode::Recursive)?;
+    Ok(()) // unreachable
+}
 
+fn refresh_leases_supervised(cache: Arc<RwLock<Vec<Lease>>>) -> ! {
     loop {
-        thread::sleep(Duration::MAX)
+        match refresh_leases(cache.clone()) {
+            Ok(_) => {}
+            Err(e) => println!("[warn] lease refresh: {}", e),
+        }
     }
 }
 
@@ -91,10 +78,7 @@ fn main() -> Result<()> {
     read_leases(leases.clone())?;
 
     let leases2 = leases.clone();
-    thread::spawn(move || match refresh_leases(leases2) {
-        Ok(_) => unreachable!(),
-        Err(e) => println!("{}", e),
-    });
+    thread::spawn(move || refresh_leases_supervised(leases2));
 
     let domain = match fs::read_to_string("/data/dnsd.domain") {
         Ok(v) => match Name::from_utf8(v) {
