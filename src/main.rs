@@ -1,4 +1,4 @@
-use rsdsl_dnsd::error::{Error, Result};
+use rsdsl_dnsd::{Error, Result};
 
 use std::cell::RefCell;
 use std::fs::{self, File};
