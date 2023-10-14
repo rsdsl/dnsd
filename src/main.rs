@@ -58,8 +58,7 @@ fn read_leases(cache: Arc<RwLock<Vec<Lease>>>) -> Result<()> {
         let mut net_leases: Vec<Lease> = match serde_json::from_reader(&file) {
             Ok(v) => v,
             Err(e) => {
-                println!("ignore broken lease file {}: {}", entry.path().display(), e);
-
+                println!("[warn] broken lease file {}: {}", entry.path().display(), e);
                 continue;
             }
         };
@@ -72,7 +71,7 @@ fn read_leases(cache: Arc<RwLock<Vec<Lease>>>) -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    println!("init");
+    println!("[info] init");
 
     let leases = Arc::new(RwLock::new(Vec::new()));
     read_leases(leases.clone())?;
@@ -84,12 +83,12 @@ fn main() -> Result<()> {
         Ok(v) => match Name::from_utf8(v) {
             Ok(w) => Some(w),
             Err(e) => {
-                println!("can't get search domain: {}", e);
+                println!("[warn] parse search domain: {}", e);
                 None
             }
         },
         Err(e) => {
-            println!("can't get search domain: {}", e);
+            println!("[warn] read search domain: {}", e);
             None
         }
     };
@@ -108,7 +107,7 @@ fn main() -> Result<()> {
         thread::spawn(
             move || match handle_query(&domain2, sock2, &buf, raddr, leases3) {
                 Ok(_) => {}
-                Err(e) => println!("can't handle query from {}: {}", raddr, e),
+                Err(e) => println!("[warn] query from {}: {}", raddr, e),
             },
         );
     }
@@ -139,7 +138,7 @@ fn handle_query(
                     known
                 }
                 Err(e) => {
-                    println!("can't read dhcp config, ignoring {}: {}", q.domain_name, e);
+                    println!("[warn] check lease presence {}: {}", q.domain_name, e);
                     false
                 }
             }
@@ -183,7 +182,7 @@ fn handle_query(
                 ipv4_addr: lease.address,
             });
 
-            println!("{} dhcp {}", raddr, answer);
+            println!("[dhcp] {} => {}", raddr, answer);
             Some(answer)
         } else if q.q_type == QType::PTR {
             let lease = dhcp_lease(&hostname, u8::MAX, leases.clone())
@@ -219,7 +218,7 @@ fn handle_query(
                 ptr_d_name: name.parse().expect("can't parse hostname"),
             });
 
-            println!("{} dhcp {}", raddr, answer);
+            println!("[dhcp] {} => {}", raddr, answer);
             Some(answer)
         } else {
             None
@@ -263,7 +262,7 @@ fn handle_query(
         resp_additionals = resp.additionals;
 
         for answer in &resp_answers {
-            println!("{} fwrd {}", raddr, answer);
+            println!("[fwrd] {} => {}", raddr, answer);
         }
     }
 
