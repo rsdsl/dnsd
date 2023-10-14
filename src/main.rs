@@ -348,7 +348,7 @@ fn usable_name(domain: &Option<Name>, name: &DomainName) -> Name {
             let mut labels = as_name.iter();
 
             labels.nth_back(domain.iter().len() - 1);
-            Name::from_labels(labels).expect("labels became invalid by removing the domain")
+            Name::from_labels(labels).expect("labels invalid after removing domain")
         }
         _ => as_name,
     }
