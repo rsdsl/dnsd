@@ -6,14 +6,16 @@ use std::io;
 pub enum Error {
     #[error("bytes sent not equal to pkt size")]
     PartialSend,
+
     #[error("io: {0}")]
     Io(#[from] io::Error),
-    #[error("serde_json: {0}")]
-    SerdeJson(#[from] serde_json::Error),
+
     #[error("dns_message_parser decode: {0}")]
     DnsDecode(#[from] dns_message_parser::DecodeError),
     #[error("dns_message_parser encode: {0}")]
     DnsEncode(#[from] dns_message_parser::EncodeError),
+    #[error("serde_json: {0}")]
+    SerdeJson(#[from] serde_json::Error),
     #[error("trust_dns_proto: {0}")]
     TrustDnsProto(#[from] trust_dns_proto::error::ProtoError),
 }
