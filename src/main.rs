@@ -1,7 +1,6 @@
-use rsdsl_dnsd::{Error, Result};
-
 use std::cell::RefCell;
 use std::fs::{self, File};
+use std::io;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
@@ -17,8 +16,29 @@ use hickory_proto::rr::Name;
 use ipnet::IpNet;
 use rsdsl_dhcp4d::lease::Lease;
 use signal_hook::{consts::SIGUSR1, iterator::Signals};
+use thiserror::Error;
 
 const UPSTREAM: &str = "[2620:fe::fe]:53";
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("failed to send whole packet (expected {0}, got {1})")]
+    PartialSend(usize, usize),
+
+    #[error("io error: {0}")]
+    Io(#[from] io::Error),
+
+    #[error("dns_message_parser decode error: {0}")]
+    DnsDecode(#[from] dns_message_parser::DecodeError),
+    #[error("dns_message_parser encode error: {0}")]
+    DnsEncode(#[from] dns_message_parser::EncodeError),
+    #[error("serde_json error: {0}")]
+    SerdeJson(#[from] serde_json::Error),
+    #[error("hickory_proto error: {0}")]
+    HickoryProto(#[from] hickory_proto::error::ProtoError),
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 fn refresh_leases(cache: Arc<RwLock<Vec<Lease>>>) -> Result<()> {
     let mut signals = Signals::new([SIGUSR1])?;
