@@ -7,7 +7,6 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
-use byteorder::{ByteOrder, NetworkEndian as NE};
 use bytes::Bytes;
 use dns_message_parser::question::{QType, Question};
 use dns_message_parser::rr::{Class, A, PTR, RR};
@@ -356,7 +355,14 @@ fn is_dhcp_known(hostname: &Name, leases: Arc<RwLock<Vec<Lease>>>) -> Result<boo
 fn subnet_id(addr: &IpAddr) -> u8 {
     match addr {
         IpAddr::V4(v4) => v4.octets()[2],
-        IpAddr::V6(v6) => NE::read_u16(&v6.octets()[6..8]) as u8,
+        IpAddr::V6(v6) => {
+            u16::from_be_bytes(
+                v6.octets()[6..8]
+                    .try_into()
+                    .expect("ipv6 address is less than 8 bytes long, should be 16"),
+            ) as u8
+                * 10
+        }
     }
 }
 

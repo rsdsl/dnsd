@@ -685,7 +685,6 @@ dependencies = [
 name = "rsdsl_dnsd"
 version = "0.3.2"
 dependencies = [
- "byteorder",
  "bytes",
  "dns-message-parser",
  "hickory-proto",
