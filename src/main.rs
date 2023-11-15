@@ -13,10 +13,10 @@ use bytes::Bytes;
 use dns_message_parser::question::{QType, Question};
 use dns_message_parser::rr::{Class, A, PTR, RR};
 use dns_message_parser::{Dns, DomainName, Flags, Opcode, RCode};
+use hickory_proto::rr::Name;
 use ipnet::IpNet;
 use rsdsl_dhcp4d::lease::Lease;
 use signal_hook::{consts::SIGUSR1, iterator::Signals};
-use trust_dns_proto::rr::Name;
 
 const UPSTREAM: &str = "[2620:fe::fe]:53";
 
@@ -245,7 +245,7 @@ fn handle_query(
 
         let n = uplink.send(&bytes)?;
         if n != bytes.len() {
-            return Err(Error::PartialSend);
+            return Err(Error::PartialSend(bytes.len(), n));
         }
 
         let mut buf = [0; 1024];
@@ -291,7 +291,7 @@ fn handle_query(
 
     let n = sock.send_to(&bytes, raddr)?;
     if n != bytes.len() {
-        return Err(Error::PartialSend);
+        return Err(Error::PartialSend(bytes.len(), n));
     }
 
     Ok(())
