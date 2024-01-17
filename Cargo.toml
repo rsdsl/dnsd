@@ -10,7 +10,7 @@ bytes = "1.4.0"
 dns-message-parser = "0.7.0"
 hickory-proto = { version = "0.24.0", default-features = false }
 ipnet = "2.5.0"
-rsdsl_dhcp4d = { git = "https://github.com/rsdsl/dhcp4d.git", version = "0.2.5" }
+rsdsl_dhcp4d = { git = "https://github.com/rsdsl/dhcp4d.git", version = "0.2.6" }
 serde_json = "1.0"
 signal-hook = "0.3.17"
 thiserror = "1.0"
