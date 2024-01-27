@@ -213,7 +213,7 @@ fn handle_query(
                     + &domain
                         .as_ref()
                         .map(|domain| domain.to_utf8())
-                        .unwrap_or(String::new())
+                        .unwrap_or_default()
             }) {
                 Some(name) => name,
                 None => {
