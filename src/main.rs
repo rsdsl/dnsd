@@ -126,10 +126,28 @@ fn main() -> Result<()> {
         thread::spawn(
             move || match handle_query(&domain2, sock2, &buf, raddr, leases3) {
                 Ok(_) => {}
-                Err(e) => println!("[warn] query from {}: {}", raddr, e),
+                Err(e) => print_query_error(&buf, raddr, e),
             },
         );
     }
+}
+
+fn print_query_error(buf: &[u8], raddr: SocketAddr, e: Error) {
+    match extract_questions(buf) {
+        Ok(questions) => {
+            for q in questions {
+                println!("[warn] {} => {}: {}", raddr, q, e);
+            }
+        }
+        Err(eprint) => println!("[warn] {}: {}; printing error: {}", raddr, e, eprint),
+    }
+}
+
+fn extract_questions(buf: &[u8]) -> Result<Vec<Question>> {
+    let bytes = Bytes::copy_from_slice(buf);
+    let msg = Dns::decode(bytes)?;
+
+    Ok(msg.questions)
 }
 
 fn handle_query(
