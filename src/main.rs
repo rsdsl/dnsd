@@ -162,11 +162,20 @@ fn handle_query(
 
     let questions = msg.questions.clone();
 
+    // Check for any invalid names. The closures cannot propagate errors to the caller.
+    // Failing is okay here because queries usually only contain a single question.
+    for q in &questions {
+        usable_name(domain, &q.domain_name)?;
+    }
+
     let ptr_nx = RefCell::new(false);
 
     let (lan, fwd): (_, Vec<Question>) =
         msg.questions.into_iter().partition(|q| {
-            match is_dhcp_known(&usable_name(domain, &q.domain_name), leases.clone()) {
+            match is_dhcp_known(
+                &usable_name(domain, &q.domain_name).expect("can't convert domain name"),
+                leases.clone(),
+            ) {
                 Ok(known) => {
                     if q.q_type == QType::PTR && !known {
                         *ptr_nx.borrow_mut() = true;
@@ -190,6 +199,7 @@ fn handle_query(
             {
                 !IpNet::from_str("10.128.0.0/16").unwrap().contains(
                     &usable_name(domain, &q.domain_name)
+                        .expect("can't convert domain name")
                         .parse_arpa_name()
                         .expect("can't parse arpa name"),
                 )
@@ -200,7 +210,7 @@ fn handle_query(
         .collect();
 
     let lan_resp = lan.into_iter().filter_map(|q| {
-        let hostname = usable_name(domain, &q.domain_name);
+        let hostname = usable_name(domain, &q.domain_name).expect("can't convert domain name");
 
         if q.q_type == QType::A {
             let net_id = subnet_id(&raddr.ip());
@@ -377,16 +387,16 @@ fn subnet_id(addr: &IpAddr) -> u8 {
     }
 }
 
-fn usable_name(domain: &Option<Name>, name: &DomainName) -> Name {
-    let as_name = Name::from_utf8(name.to_string()).expect("not a valid UTF-8 domain name");
+fn usable_name(domain: &Option<Name>, name: &DomainName) -> Result<Name> {
+    let as_name = Name::from_utf8(name.to_string())?;
 
     match domain {
         Some(domain) if domain.zone_of(&as_name) => {
             let mut labels = as_name.iter();
 
             labels.nth_back(domain.iter().len() - 1);
-            Name::from_labels(labels).expect("labels invalid after removing domain")
+            Ok(Name::from_labels(labels).expect("labels invalid after removing domain"))
         }
-        _ => as_name,
+        _ => Ok(as_name),
     }
 }
