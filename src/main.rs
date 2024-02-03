@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::fs::{self, File};
 use std::io;
-use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -17,7 +17,8 @@ use rsdsl_dhcp4d::lease::Lease;
 use signal_hook::{consts::SIGUSR1, iterator::Signals};
 use thiserror::Error;
 
-const UPSTREAM: &str = "[2620:fe::fe]:53";
+const UPSTREAM_PRIMARY: &str = "[2620:fe::fe]:53";
+const UPSTREAM_SECONDARY: &str = "9.9.9.9:53";
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -285,22 +286,16 @@ fn handle_query(
     if !msg.questions.is_empty() {
         let bytes = msg.encode()?;
 
-        let uplink = UdpSocket::bind("[::]:0")?;
-
-        uplink.set_read_timeout(Some(Duration::from_secs(1)))?;
-        uplink.connect(UPSTREAM)?;
-
-        let n = uplink.send(&bytes)?;
-        if n != bytes.len() {
-            return Err(Error::PartialSend(bytes.len(), n));
-        }
-
-        let mut buf = [0; 1024];
-        let n = uplink.recv(&mut buf)?;
-        let buf = &buf[..n];
-
-        let bytes = Bytes::copy_from_slice(buf);
-        let resp = Dns::decode(bytes)?;
+        let resp = match upstream_query(UPSTREAM_PRIMARY, &bytes) {
+            Ok(v) => v,
+            Err(e) => match upstream_query(UPSTREAM_SECONDARY, &bytes) {
+                Ok(v) => v,
+                Err(e2) => {
+                    println!("[warn] primary unavailable: {}", e);
+                    return Err(e2);
+                }
+            },
+        };
 
         rcode = resp.flags.rcode;
 
@@ -342,6 +337,27 @@ fn handle_query(
     }
 
     Ok(())
+}
+
+fn upstream_query<A: ToSocketAddrs>(upstream: A, bytes: &[u8]) -> Result<Dns> {
+    let uplink = UdpSocket::bind("[::]:0")?;
+
+    uplink.set_read_timeout(Some(Duration::from_secs(1)))?;
+    uplink.connect(upstream)?;
+
+    let n = uplink.send(bytes)?;
+    if n != bytes.len() {
+        return Err(Error::PartialSend(bytes.len(), n));
+    }
+
+    let mut buf = [0; 1024];
+    let n = uplink.recv(&mut buf)?;
+    let buf = &buf[..n];
+
+    let bytes = Bytes::copy_from_slice(buf);
+    let resp = Dns::decode(bytes)?;
+
+    Ok(resp)
 }
 
 fn find_lease(hostname: &Name, mut leases: impl Iterator<Item = Lease>) -> Option<Lease> {
