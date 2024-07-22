@@ -19,7 +19,7 @@ use thiserror::Error;
 
 const UPSTREAM_PRIMARY: &str = "[2620:fe::fe]:53";
 const UPSTREAM_SECONDARY: &str = "9.9.9.9:53";
-const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(1);
+const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Error)]
 pub enum Error {
