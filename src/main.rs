@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 use bytes::Bytes;
 use dns_message_parser::question::{QType, Question};
 use dns_message_parser::rr::{Class, A, PTR, RR};
-use dns_message_parser::{Dns, DomainName, Flags, Opcode, RCode};
+use dns_message_parser::{Dns, DomainName, Flags, RCode};
 use hickory_proto::rr::Name;
 use ipnet::IpNet;
 use rsdsl_dhcp4d::lease::Lease;
@@ -378,10 +378,10 @@ fn handle_query(
         id: msg.id,
         flags: Flags {
             qr: true,
-            opcode: Opcode::Query,
+            opcode: msg.flags.opcode,
             aa: true,
             tc: false,
-            rd: true,
+            rd: msg.flags.rd,
             ra: true,
             ad: false,
             cd: false,
