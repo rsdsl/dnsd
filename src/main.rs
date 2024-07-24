@@ -126,9 +126,16 @@ fn main() -> Result<()> {
         let buf = buf.to_vec();
         let leases3 = leases.clone();
         thread::spawn(
-            move || match handle_query(&domain2, sock2, &buf, raddr, leases3) {
+            move || match handle_query(&domain2, &sock2, &buf, raddr, leases3) {
                 Ok(_) => {}
-                Err(e) => print_query_error(&buf, raddr, e),
+                Err(e) => {
+                    match respond_with_error(&sock2, &buf, raddr) {
+                        Ok(_) => {}
+                        Err(e) => println!("[warn] {} send error response: {}", raddr, e),
+                    }
+
+                    print_query_error(&buf, raddr, e);
+                }
             },
         );
     }
@@ -145,6 +152,39 @@ fn print_query_error(buf: &[u8], raddr: SocketAddr, e: Error) {
     }
 }
 
+fn respond_with_error(sock: &UdpSocket, buf: &[u8], raddr: SocketAddr) -> Result<()> {
+    let bytes = Bytes::copy_from_slice(buf);
+    let msg = Dns::decode(bytes)?;
+
+    let resp = Dns {
+        id: msg.id,
+        flags: Flags {
+            qr: true,
+            opcode: msg.flags.opcode,
+            aa: false,
+            tc: false,
+            rd: msg.flags.rd,
+            ra: true,
+            ad: false,
+            cd: false,
+            rcode: RCode::ServFail,
+        },
+        questions: Vec::default(),
+        answers: Vec::default(),
+        authorities: Vec::default(),
+        additionals: Vec::default(),
+    };
+
+    let bytes = resp.encode()?;
+
+    let n = sock.send_to(&bytes, raddr)?;
+    if n != bytes.len() {
+        return Err(Error::PartialSend(bytes.len(), n));
+    }
+
+    Ok(())
+}
+
 fn extract_questions(buf: &[u8]) -> Result<Vec<Question>> {
     let bytes = Bytes::copy_from_slice(buf);
     let msg = Dns::decode(bytes)?;
@@ -154,7 +194,7 @@ fn extract_questions(buf: &[u8]) -> Result<Vec<Question>> {
 
 fn handle_query(
     domain: &Option<Name>,
-    sock: UdpSocket,
+    sock: &UdpSocket,
     buf: &[u8],
     raddr: SocketAddr,
     leases: Arc<RwLock<Vec<Lease>>>,
@@ -290,9 +330,12 @@ fn handle_query(
         let resp = match upstream_query(UPSTREAM_PRIMARY, &bytes) {
             Ok(v) => v,
             Err(e) => match upstream_query(UPSTREAM_SECONDARY, &bytes) {
-                Ok(v) => v,
+                Ok(v) => {
+                    println!("[warn] {} primary unavailable: {}", raddr, e);
+                    v
+                }
                 Err(e2) => {
-                    println!("[warn] primary unavailable: {}", e);
+                    println!("[warn] {} secondary unavailable: {}", raddr, e);
                     return Err(e2);
                 }
             },
@@ -343,7 +386,7 @@ fn handle_query(
 fn upstream_query<A: ToSocketAddrs>(upstream: A, bytes: &[u8]) -> Result<Dns> {
     let uplink = UdpSocket::bind("[::]:0")?;
 
-    uplink.set_read_timeout(Some(Duration::from_secs(1)))?;
+    uplink.set_read_timeout(Some(UPSTREAM_TIMEOUT))?;
     uplink.connect(upstream)?;
 
     let n = uplink.send(bytes)?;
