@@ -609,7 +609,7 @@ dependencies = [
 
 [[package]]
 name = "rsdsl_dnsd"
-version = "0.3.6"
+version = "0.3.7-dev"
 dependencies = [
  "bytes",
  "dns-message-parser",
