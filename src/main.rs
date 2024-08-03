@@ -1,7 +1,8 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
+use std::io::{self, BufRead, BufReader};
+use std::net::{self, IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -9,12 +10,15 @@ use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 use dns_message_parser::question::{QType, Question};
-use dns_message_parser::rr::{Class, A, PTR, RR};
+use dns_message_parser::rr::{Class, A, AAAA, PTR, RR};
 use dns_message_parser::{Dns, DomainName, Flags, RCode};
 use hickory_proto::rr::Name;
 use ipnet::IpNet;
 use rsdsl_dhcp4d::lease::Lease;
-use signal_hook::{consts::SIGUSR1, iterator::Signals};
+use signal_hook::{
+    consts::{SIGUSR1, SIGUSR2},
+    iterator::Signals,
+};
 use thiserror::Error;
 
 const UPSTREAM_PRIMARY: &str = "[2620:fe::fe]:53";
@@ -23,9 +27,13 @@ const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("hosts entry missing address column: {0}")]
+    NoAddrColumn(String),
     #[error("failed to send whole packet (expected {0}, got {1})")]
     PartialSend(usize, usize),
 
+    #[error("network address parse error: {0}")]
+    AddrParse(#[from] net::AddrParseError),
     #[error("io error: {0}")]
     Io(#[from] io::Error),
 
@@ -91,6 +99,53 @@ fn read_leases(cache: Arc<RwLock<Vec<Lease>>>) -> Result<()> {
     Ok(())
 }
 
+fn refresh_hosts(cache: Arc<RwLock<HashMap<String, IpAddr>>>) -> Result<()> {
+    let mut signals = Signals::new([SIGUSR2])?;
+    for _ in signals.forever() {
+        read_hosts(cache.clone())?;
+    }
+
+    Ok(()) // unreachable
+}
+
+fn refresh_hosts_supervised(cache: Arc<RwLock<HashMap<String, IpAddr>>>) -> ! {
+    loop {
+        match refresh_hosts(cache.clone()) {
+            Ok(_) => {}
+            Err(e) => println!("[warn] hosts refresh: {}", e),
+        }
+    }
+}
+
+fn read_hosts(cache: Arc<RwLock<HashMap<String, IpAddr>>>) -> Result<()> {
+    let mut hosts = HashMap::new();
+
+    let file = match File::open("/data/hosts.dnsd") {
+        Ok(file) => file,
+        Err(e) => {
+            if e.kind() == io::ErrorKind::NotFound {
+                return Ok(());
+            } else {
+                return Err(e.into());
+            }
+        }
+    };
+    let reader = BufReader::new(file);
+    for line in reader.lines() {
+        let line = line?;
+        let split_input = line.clone();
+
+        let mut columns = split_input.split_whitespace();
+        let addr = columns.next().ok_or(Error::NoAddrColumn(line))?;
+        for host in columns {
+            hosts.insert(host.to_string(), addr.parse()?);
+        }
+    }
+
+    *cache.write().unwrap() = hosts;
+    Ok(())
+}
+
 fn main() -> Result<()> {
     println!("[info] init");
 
@@ -99,6 +154,12 @@ fn main() -> Result<()> {
 
     let leases2 = leases.clone();
     thread::spawn(move || refresh_leases_supervised(leases2));
+
+    let hosts = Arc::new(RwLock::new(HashMap::new()));
+    read_hosts(hosts.clone())?;
+
+    let hosts2 = hosts.clone();
+    thread::spawn(move || refresh_hosts_supervised(hosts2));
 
     let domain = match fs::read_to_string("/data/dnsd.domain") {
         Ok(v) => match Name::from_utf8(v) {
@@ -125,8 +186,9 @@ fn main() -> Result<()> {
         let sock2 = sock.try_clone()?;
         let buf = buf.to_vec();
         let leases3 = leases.clone();
+        let hosts3 = hosts.clone();
         thread::spawn(
-            move || match handle_query(&domain2, &sock2, &buf, raddr, leases3) {
+            move || match handle_query(&domain2, &sock2, &buf, raddr, leases3, hosts3) {
                 Ok(_) => {}
                 Err(e) => {
                     match respond_with_error(&sock2, &buf, raddr) {
@@ -198,6 +260,7 @@ fn handle_query(
     buf: &[u8],
     raddr: SocketAddr,
     leases: Arc<RwLock<Vec<Lease>>>,
+    hosts: Arc<RwLock<HashMap<String, IpAddr>>>,
 ) -> Result<()> {
     let bytes = Bytes::copy_from_slice(buf);
     let mut msg = Dns::decode(bytes)?;
@@ -212,25 +275,21 @@ fn handle_query(
 
     let ptr_nx = RefCell::new(false);
 
-    let (lan, fwd): (_, Vec<Question>) =
-        msg.questions.into_iter().partition(|q| {
-            match is_dhcp_known(
-                &usable_name(domain, &q.domain_name).expect("can't convert domain name"),
-                leases.clone(),
-            ) {
-                Ok(known) => {
-                    if q.q_type == QType::PTR && !known {
-                        *ptr_nx.borrow_mut() = true;
-                    }
+    let (lan, fwd): (_, Vec<Question>) = msg.questions.into_iter().partition(|q| {
+        let known = is_file_known(
+            &usable_name(domain, &q.domain_name).expect("can't convert domain name"),
+            hosts.clone(),
+        ) || is_dhcp_known(
+            &usable_name(domain, &q.domain_name).expect("can't convert domain name"),
+            leases.clone(),
+        );
 
-                    known
-                }
-                Err(e) => {
-                    println!("[warn] check lease presence {}: {}", q.domain_name, e);
-                    false
-                }
-            }
-        });
+        if q.q_type == QType::PTR && !known {
+            *ptr_nx.borrow_mut() = true;
+        }
+
+        known
+    });
 
     msg.questions = fwd
         .into_iter()
@@ -255,60 +314,102 @@ fn handle_query(
         let hostname = usable_name(domain, &q.domain_name).expect("can't convert domain name");
 
         if q.q_type == QType::A {
-            let net_id = subnet_id(&raddr.ip());
-            let lease = dhcp_lease(&hostname, net_id, leases.clone())
-                .unwrap()
-                .unwrap();
+            if let Some(entry) = file_entry(&hostname, hosts.clone()) {
+                let IpAddr::V4(addr_as_v4) = entry.1 else {
+                    return None;
+                };
+                let answer = RR::A(A {
+                    domain_name: q.domain_name,
+                    ttl: 300,
+                    ipv4_addr: addr_as_v4,
+                });
 
-            let lease_ttl = match lease.expires.duration_since(SystemTime::now()) {
-                Ok(v) => v,
-                Err(_) => return None,
+                println!("[file] {} => {}", raddr, answer);
+                Some(answer)
+            } else {
+                let net_id = subnet_id(&raddr.ip());
+                let lease = dhcp_lease(&hostname, net_id, leases.clone()).unwrap();
+
+                let lease_ttl = match lease.expires.duration_since(SystemTime::now()) {
+                    Ok(v) => v,
+                    Err(_) => return None,
+                };
+
+                let answer = RR::A(A {
+                    domain_name: q.domain_name,
+                    ttl: lease_ttl.as_secs() as u32,
+                    ipv4_addr: lease.address,
+                });
+
+                println!("[dhcp] {} => {}", raddr, answer);
+                Some(answer)
+            }
+        } else if q.q_type == QType::AAAA {
+            let entry = file_entry(&hostname, hosts.clone())?;
+            let IpAddr::V6(addr_as_v6) = entry.1 else {
+                return None;
             };
-
-            let answer = RR::A(A {
+            let answer = RR::AAAA(AAAA {
                 domain_name: q.domain_name,
-                ttl: lease_ttl.as_secs() as u32,
-                ipv4_addr: lease.address,
+                ttl: 300,
+                ipv6_addr: addr_as_v6,
             });
 
-            println!("[dhcp] {} => {}", raddr, answer);
+            println!("[file] {} => {}", raddr, answer);
             Some(answer)
         } else if q.q_type == QType::PTR {
-            let lease = dhcp_lease(&hostname, u8::MAX, leases.clone())
-                .unwrap()
-                .unwrap();
-
-            let name = match lease.hostname.map(|name| {
-                name + "."
+            if let Some(entry) = file_entry(&hostname, hosts.clone()) {
+                let name = entry.0
+                    + "."
                     + &domain
                         .as_ref()
                         .map(|domain| domain.to_utf8())
-                        .unwrap_or_default()
-            }) {
-                Some(name) => name,
-                None => {
-                    *ptr_nx.borrow_mut() = true;
-                    return None;
-                }
-            };
+                        .unwrap_or_default();
 
-            let lease_ttl = match lease.expires.duration_since(SystemTime::now()) {
-                Ok(v) => v,
-                Err(_) => {
-                    *ptr_nx.borrow_mut() = true;
-                    return None;
-                }
-            };
+                let answer = RR::PTR(PTR {
+                    domain_name: q.domain_name,
+                    ttl: 300,
+                    class: Class::IN,
+                    ptr_d_name: name.parse().expect("can't parse hostname"),
+                });
 
-            let answer = RR::PTR(PTR {
-                domain_name: q.domain_name,
-                ttl: lease_ttl.as_secs() as u32,
-                class: Class::IN,
-                ptr_d_name: name.parse().expect("can't parse hostname"),
-            });
+                println!("[file] {} => {}", raddr, answer);
+                Some(answer)
+            } else {
+                let lease = dhcp_lease(&hostname, u8::MAX, leases.clone()).unwrap();
 
-            println!("[dhcp] {} => {}", raddr, answer);
-            Some(answer)
+                let name = match lease.hostname.map(|name| {
+                    name + "."
+                        + &domain
+                            .as_ref()
+                            .map(|domain| domain.to_utf8())
+                            .unwrap_or_default()
+                }) {
+                    Some(name) => name,
+                    None => {
+                        *ptr_nx.borrow_mut() = true;
+                        return None;
+                    }
+                };
+
+                let lease_ttl = match lease.expires.duration_since(SystemTime::now()) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        *ptr_nx.borrow_mut() = true;
+                        return None;
+                    }
+                };
+
+                let answer = RR::PTR(PTR {
+                    domain_name: q.domain_name,
+                    ttl: lease_ttl.as_secs() as u32,
+                    class: Class::IN,
+                    ptr_d_name: name.parse().expect("can't parse hostname"),
+                });
+
+                println!("[dhcp] {} => {}", raddr, answer);
+                Some(answer)
+            }
         } else {
             None
         }
@@ -404,6 +505,33 @@ fn upstream_query<A: ToSocketAddrs>(upstream: A, bytes: &[u8]) -> Result<Dns> {
     Ok(resp)
 }
 
+fn file_entry(
+    hostname: &Name,
+    hosts: Arc<RwLock<HashMap<String, IpAddr>>>,
+) -> Option<(String, IpAddr)> {
+    let hosts = hosts.read().unwrap();
+    let (host, addr) = hosts.iter().find(|(host, addr)| {
+        if Name::from_str("in-addr.arpa.").unwrap().zone_of(hostname) && hostname.iter().len() <= 6
+        {
+            IpNet::new(**addr, 32).unwrap()
+                == hostname.parse_arpa_name().expect("can't parse arpa name")
+        } else if Name::from_str("ip6.arpa.").unwrap().zone_of(hostname)
+            && hostname.iter().len() <= 34
+        {
+            IpNet::new(**addr, 128).unwrap()
+                == hostname.parse_arpa_name().expect("can't parse arpa name")
+        } else {
+            (*host).clone() + "." == hostname.to_utf8()
+        }
+    })?;
+
+    Some((host.clone(), *addr))
+}
+
+fn is_file_known(hostname: &Name, hosts: Arc<RwLock<HashMap<String, IpAddr>>>) -> bool {
+    file_entry(hostname, hosts).is_some()
+}
+
 fn find_lease(hostname: &Name, mut leases: impl Iterator<Item = Lease>) -> Option<Lease> {
     leases.find(|lease| {
         if Name::from_str("in-addr.arpa.").unwrap().zone_of(hostname) && hostname.iter().len() <= 6
@@ -416,11 +544,7 @@ fn find_lease(hostname: &Name, mut leases: impl Iterator<Item = Lease>) -> Optio
     })
 }
 
-fn dhcp_lease(
-    hostname: &Name,
-    net_id: u8,
-    leases: Arc<RwLock<Vec<Lease>>>,
-) -> Result<Option<Lease>> {
+fn dhcp_lease(hostname: &Name, net_id: u8, leases: Arc<RwLock<Vec<Lease>>>) -> Option<Lease> {
     let leases = leases.read().unwrap();
 
     let same_subnet = find_lease(
@@ -433,11 +557,11 @@ fn dhcp_lease(
 
     let any = find_lease(hostname, leases.clone().into_iter());
 
-    Ok(same_subnet.or(any))
+    same_subnet.or(any)
 }
 
-fn is_dhcp_known(hostname: &Name, leases: Arc<RwLock<Vec<Lease>>>) -> Result<bool> {
-    Ok(dhcp_lease(hostname, u8::MAX, leases)?.is_some())
+fn is_dhcp_known(hostname: &Name, leases: Arc<RwLock<Vec<Lease>>>) -> bool {
+    dhcp_lease(hostname, u8::MAX, leases).is_some()
 }
 
 fn subnet_id(addr: &IpAddr) -> u8 {
