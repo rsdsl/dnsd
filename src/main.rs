@@ -382,11 +382,7 @@ fn handle_query(
                 forward_hosts.clone(),
                 reverse_hosts.clone(),
             ) {
-                let name = entry.0
-                    + &domain
-                        .as_ref()
-                        .map(|domain| domain.to_utf8())
-                        .unwrap_or_default();
+                let name = entry.0;
 
                 let answer = RR::PTR(PTR {
                     domain_name: q.domain_name,
