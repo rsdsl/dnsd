@@ -291,7 +291,7 @@ fn handle_query(
 
     let (lan, fwd): (_, Vec<Question>) = msg.questions.into_iter().partition(|q| {
         let known = is_file_known(
-            &usable_name(domain, &q.domain_name).expect("can't convert domain name"),
+            usable_name(domain, &q.domain_name).expect("can't convert domain name"),
             forward_hosts.clone(),
             reverse_hosts.clone(),
         ) || is_dhcp_known(
@@ -329,8 +329,11 @@ fn handle_query(
         let hostname = usable_name(domain, &q.domain_name).expect("can't convert domain name");
 
         if q.q_type == QType::A {
-            if let Some(entry) = file_entry(&hostname, forward_hosts.clone(), reverse_hosts.clone())
-            {
+            if let Some(entry) = file_entry(
+                hostname.clone(),
+                forward_hosts.clone(),
+                reverse_hosts.clone(),
+            ) {
                 let IpAddr::V4(addr_as_v4) = entry.1 else {
                     return None;
                 };
@@ -361,7 +364,7 @@ fn handle_query(
                 Some(answer)
             }
         } else if q.q_type == QType::AAAA {
-            let entry = file_entry(&hostname, forward_hosts.clone(), reverse_hosts.clone())?;
+            let entry = file_entry(hostname, forward_hosts.clone(), reverse_hosts.clone())?;
             let IpAddr::V6(addr_as_v6) = entry.1 else {
                 return None;
             };
@@ -374,8 +377,11 @@ fn handle_query(
             println!("[file] {} => {}", raddr, answer);
             Some(answer)
         } else if q.q_type == QType::PTR {
-            if let Some(entry) = file_entry(&hostname, forward_hosts.clone(), reverse_hosts.clone())
-            {
+            if let Some(entry) = file_entry(
+                hostname.clone(),
+                forward_hosts.clone(),
+                reverse_hosts.clone(),
+            ) {
                 let name = entry.0
                     + &domain
                         .as_ref()
@@ -522,37 +528,37 @@ fn upstream_query<A: ToSocketAddrs>(upstream: A, bytes: &[u8]) -> Result<Dns> {
 }
 
 fn file_entry(
-    hostname: &Name,
+    mut hostname: Name,
     forward_hosts: ForwardHosts,
     reverse_hosts: ReverseHosts,
 ) -> Option<(String, IpAddr)> {
     let forward_hosts = forward_hosts.read().unwrap();
     let reverse_hosts = reverse_hosts.read().unwrap();
 
-    let mapping = if (Name::from_str("in-addr.arpa.").unwrap().zone_of(hostname)
-        && hostname.iter().len() <= 6)
-        || (Name::from_str("ip6.arpa.").unwrap().zone_of(hostname) && hostname.iter().len() <= 34)
+    if (Name::from_str("in-addr.arpa.").unwrap().zone_of(&hostname) && hostname.iter().len() <= 6)
+        || (Name::from_str("ip6.arpa.").unwrap().zone_of(&hostname) && hostname.iter().len() <= 34)
     {
         let addr = hostname
             .parse_arpa_name()
             .expect("can't parse arpa name")
             .addr();
         let host = reverse_hosts.get(&addr)?;
-        (host.to_string(), addr)
+        Some((host.to_string(), addr))
     } else {
-        let hostname_utf8 = hostname.to_utf8();
-        let addr = forward_hosts.get(&hostname_utf8)?;
-        (hostname_utf8, *addr)
-    };
+        while hostname.num_labels() > 0 {
+            let hostname_utf8 = hostname.to_utf8();
+            if let Some(addr) = forward_hosts.get(&hostname_utf8) {
+                return Some((hostname_utf8, *addr));
+            }
 
-    Some(mapping)
+            hostname = hostname.trim_to((hostname.num_labels() - 1).into());
+        }
+
+        None
+    }
 }
 
-fn is_file_known(
-    hostname: &Name,
-    forward_hosts: ForwardHosts,
-    reverse_hosts: ReverseHosts,
-) -> bool {
+fn is_file_known(hostname: Name, forward_hosts: ForwardHosts, reverse_hosts: ReverseHosts) -> bool {
     file_entry(hostname, forward_hosts, reverse_hosts).is_some()
 }
 
