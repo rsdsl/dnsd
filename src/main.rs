@@ -513,17 +513,23 @@ fn file_entry(
     let (host, addr) = if Name::from_str("in-addr.arpa.").unwrap().zone_of(hostname)
         && hostname.iter().len() <= 6
     {
-        let (host, addr) = hosts.iter().find(|(_, addr)| {
-            IpNet::new(**addr, 32).unwrap()
-                == hostname.parse_arpa_name().expect("can't parse arpa name")
-        })?;
+        let (host, addr) = hosts
+            .iter()
+            .filter(|(_, addr)| addr.is_ipv4())
+            .find(|(_, addr)| {
+                IpNet::new(**addr, 32).unwrap()
+                    == hostname.parse_arpa_name().expect("can't parse arpa name")
+            })?;
         (host.clone(), *addr)
     } else if Name::from_str("ip6.arpa.").unwrap().zone_of(hostname) && hostname.iter().len() <= 34
     {
-        let (host, addr) = hosts.iter().find(|(_, addr)| {
-            IpNet::new(**addr, 128).unwrap()
-                == hostname.parse_arpa_name().expect("can't parse arpa name")
-        })?;
+        let (host, addr) = hosts
+            .iter()
+            .filter(|(_, addr)| addr.is_ipv6())
+            .find(|(_, addr)| {
+                IpNet::new(**addr, 128).unwrap()
+                    == hostname.parse_arpa_name().expect("can't parse arpa name")
+            })?;
         (host.clone(), *addr)
     } else {
         let hostname_utf8 = hostname.to_utf8();
