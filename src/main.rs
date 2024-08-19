@@ -138,7 +138,7 @@ fn read_hosts(cache: Arc<RwLock<HashMap<String, IpAddr>>>) -> Result<()> {
         let mut columns = split_input.split_whitespace();
         let addr = columns.next().ok_or(Error::NoAddrColumn(line))?;
         for host in columns {
-            hosts.insert(host.to_string(), addr.parse()?);
+            hosts.insert(host.to_string() + ".", addr.parse()?);
         }
     }
 
@@ -510,22 +510,28 @@ fn file_entry(
     hosts: Arc<RwLock<HashMap<String, IpAddr>>>,
 ) -> Option<(String, IpAddr)> {
     let hosts = hosts.read().unwrap();
-    let (host, addr) = hosts.iter().find(|(host, addr)| {
-        if Name::from_str("in-addr.arpa.").unwrap().zone_of(hostname) && hostname.iter().len() <= 6
-        {
+    let (host, addr) = if Name::from_str("in-addr.arpa.").unwrap().zone_of(hostname)
+        && hostname.iter().len() <= 6
+    {
+        let (host, addr) = hosts.iter().find(|(_, addr)| {
             IpNet::new(**addr, 32).unwrap()
                 == hostname.parse_arpa_name().expect("can't parse arpa name")
-        } else if Name::from_str("ip6.arpa.").unwrap().zone_of(hostname)
-            && hostname.iter().len() <= 34
-        {
+        })?;
+        (host.clone(), *addr)
+    } else if Name::from_str("ip6.arpa.").unwrap().zone_of(hostname) && hostname.iter().len() <= 34
+    {
+        let (host, addr) = hosts.iter().find(|(_, addr)| {
             IpNet::new(**addr, 128).unwrap()
                 == hostname.parse_arpa_name().expect("can't parse arpa name")
-        } else {
-            (*host).clone() + "." == hostname.to_utf8()
-        }
-    })?;
+        })?;
+        (host.clone(), *addr)
+    } else {
+        let hostname_utf8 = hostname.to_utf8();
+        let addr = hosts.get(&hostname_utf8)?;
+        (hostname_utf8, *addr)
+    };
 
-    Some((host.clone(), *addr))
+    Some((host, addr))
 }
 
 fn is_file_known(hostname: &Name, hosts: Arc<RwLock<HashMap<String, IpAddr>>>) -> bool {
