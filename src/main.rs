@@ -360,7 +360,6 @@ fn handle_query(
         } else if q.q_type == QType::PTR {
             if let Some(entry) = file_entry(&hostname, hosts.clone()) {
                 let name = entry.0
-                    + "."
                     + &domain
                         .as_ref()
                         .map(|domain| domain.to_utf8())
